@@ -122,11 +122,19 @@ openbox_env_report() {
       fi
     done
     echo "内存: $(awk '/^MemAvailable:/ {printf "%d MB 可用", $2/1024}' /proc/meminfo 2>/dev/null)"
-    _er_tools=""
-    for _er_t in curl wget tar gzip mktemp ss netstat uci nft; do
-      command -v "$_er_t" >/dev/null 2>&1 || _er_tools="$_er_tools $_er_t"
+    # 必需的只有 tar、gzip 和 curl / wget 其中一个;其余要么有退路(mktemp、ss / netstat),要么只在特定平台用(uci、nft)。
+    # 以前一律写「缺少的命令」,好几个人把「ss」当成了安装失败的原因(GitHub #248 #250 #255)
+    _er_need=""
+    _er_opt=""
+    for _er_t in tar gzip; do
+      command -v "$_er_t" >/dev/null 2>&1 || _er_need="$_er_need $_er_t"
     done
-    echo "缺少的命令:${_er_tools:- (无)}"
+    command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || _er_need="$_er_need curl/wget"
+    for _er_t in mktemp ss netstat uci nft; do
+      command -v "$_er_t" >/dev/null 2>&1 || _er_opt="$_er_opt $_er_t"
+    done
+    [ -n "$_er_need" ] && echo "缺少必需的命令:$_er_need"
+    [ -n "$_er_opt" ] && echo "未安装的可选命令(不影响安装):$_er_opt"
     echo "----------------------------------------------------"
   } >&2
   return 0
@@ -188,7 +196,8 @@ openbox_glibc_node() {
 openbox_node_smoke() {
   _ob_node="$INSTALL_ROOT/node/bin/node"
   [ -x "$_ob_node" ] || { echo "缺少 $_ob_node"; return 1; }
-  _ob_out=$(LD_LIBRARY_PATH="$INSTALL_ROOT/node/lib" "$_ob_node" -e 'process.stdout.write("ok")' 2>&1)
+  # OPENSSL_CONF=/dev/null:不读系统的 OpenSSL 配置,有的固件那份写法随包 Node 解析不了(GitHub #265);面板服务也这样起
+  _ob_out=$(OPENSSL_CONF=/dev/null LD_LIBRARY_PATH="$INSTALL_ROOT/node/lib" "$_ob_node" -e 'process.stdout.write("ok")' 2>&1)
   [ "$_ob_out" = "ok" ] && return 0
   echo "$_ob_out" | head -n 5
   return 1
@@ -312,7 +321,8 @@ safe_rm_rf() {
 # 系统 tar 失败就换它重试一次(已经解出来的文件直接覆盖)。随包的 update-components.sh 也用它。
 extract_tgz() {
   tar -xzf "$1" -C "$2" && return 0
-  if command -v busybox >/dev/null 2>&1 && busybox --list 2>/dev/null | grep -qx tar; then
+  # 不先查 busybox --list:有的 busybox 编译时不带 --list,查不到也能用(GitHub #264);没有 tar 小程序时这一步只是再失败一次
+  if command -v busybox >/dev/null 2>&1; then
     warn "系统 tar 解包失败,改用 busybox tar 重试..."
     busybox tar -xzf "$1" -C "$2" && return 0
   fi
@@ -1687,7 +1697,7 @@ if [ "$CORE_WAS_RUNNING" = "1" ]; then
     write_status restarting_core "" "" "面板已重启,正在按新版本重新生成配置并启动内核"
     info "升级前内核在运行,按新版本重新生成配置并启动内核..."
     if OPENBOX_ROOT="$INSTALL_ROOT" ZASHBOARD_DB_PATH="$INSTALL_ROOT/data/openbox.sqlite" \
-       LD_LIBRARY_PATH="$INSTALL_ROOT/node/lib" "$INSTALL_ROOT/node/bin/node" "$DEPLOY_CLI" >/dev/null 2>&1; then
+       OPENSSL_CONF=/dev/null LD_LIBRARY_PATH="$INSTALL_ROOT/node/lib" "$INSTALL_ROOT/node/bin/node" "$DEPLOY_CLI" >/dev/null 2>&1; then
       CORE_MSG="内核已按新版本重新生成配置并启动。"
     else
       warn "内核启动失败(配置生成或校验没通过),请到面板查看原因后重新启动。"

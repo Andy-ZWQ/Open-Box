@@ -88,11 +88,19 @@ openbox_env_report() {
       fi
     done
     echo "内存: $(awk '/^MemAvailable:/ {printf "%d MB 可用", $2/1024}' /proc/meminfo 2>/dev/null)"
-    _er_tools=""
-    for _er_t in curl wget tar gzip mktemp ss netstat uci nft; do
-      command -v "$_er_t" >/dev/null 2>&1 || _er_tools="$_er_tools $_er_t"
+    # 必需的只有 tar、gzip 和 curl / wget 其中一个;其余要么有退路(mktemp、ss / netstat),要么只在特定平台用(uci、nft)。
+    # 以前一律写「缺少的命令」,好几个人把「ss」当成了安装失败的原因(GitHub #248 #250 #255)
+    _er_need=""
+    _er_opt=""
+    for _er_t in tar gzip; do
+      command -v "$_er_t" >/dev/null 2>&1 || _er_need="$_er_need $_er_t"
     done
-    echo "缺少的命令:${_er_tools:- (无)}"
+    command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || _er_need="$_er_need curl/wget"
+    for _er_t in mktemp ss netstat uci nft; do
+      command -v "$_er_t" >/dev/null 2>&1 || _er_opt="$_er_opt $_er_t"
+    done
+    [ -n "$_er_need" ] && echo "缺少必需的命令:$_er_need"
+    [ -n "$_er_opt" ] && echo "未安装的可选命令(不影响安装):$_er_opt"
     echo "----------------------------------------------------"
   } >&2
   return 0
