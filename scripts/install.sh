@@ -820,6 +820,16 @@ openbox_node_smoke() {
   _ob_out=$(OPENSSL_CONF=/dev/null LD_LIBRARY_PATH="$INSTALL_ROOT/node/lib" "$_ob_node" -e 'process.stdout.write("ok")' 2>&1)
   [ "$_ob_out" = "ok" ] && return 0
   echo "$_ob_out" | head -n 5
+  # 动态链接器报缺符号 = 固件的 musl C 库太老(OpenWrt 21.02 及更早是 1.1.x,没有 pthread_getname_np 等),
+  # 随包 Node 要 musl 1.2.3 以上;顺手把系统的版本号打出来,调用处据此提示升级固件
+  case "$_ob_out" in
+    *"symbol not found"*)
+      for _ob_ld in /lib/ld-musl-*.so.1; do
+        [ -x "$_ob_ld" ] && "$_ob_ld" 2>&1 | sed -n 's/^Version /系统的 musl C 库版本:/p'
+        break
+      done
+      ;;
+  esac
   return 1
 }
 # ---- openbox-node-smoke:end ----
@@ -841,7 +851,8 @@ info "检查随包 Node 能否运行..."
 if ! _ob_node_err=$(openbox_node_smoke); then
   warn "随包的 Node 在这台设备上起不来:"
   [ -n "$_ob_node_err" ] && printf '%s\n' "$_ob_node_err" >&2
-  die "面板跑不起来,安装中止。请把上面几行连同 \`uname -a\`、\`getconf PAGE_SIZE\`、\`head -3 /proc/meminfo\` 一起发到 GitHub issue。"
+  case "$_ob_node_err" in *"symbol not found"*) die "固件太老,请升级到 OpenWrt 24 以上。" ;; esac
+  die "面板跑不起来,安装中止。请把上面几行连同 \`uname -a\`、\`cat /etc/openwrt_release\`、\`head -3 /proc/meminfo\` 一起发到 GitHub issue。"
 fi
 
 mkdir -p "$INSTALL_ROOT/data" || die "无法创建 $INSTALL_ROOT/data。"
