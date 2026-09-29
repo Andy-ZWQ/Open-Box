@@ -886,7 +886,18 @@ if [ "$DETACH" = "1" ]; then
   : > "$UPDATE_LOG" 2>/dev/null || true
   { echo "stage=starting"; } > "$STATUS_PATH" 2>/dev/null || true
   rm -f "$CANCEL_FLAG" 2>/dev/null || true
-  if command -v setsid >/dev/null 2>&1; then
+  # systemd(Debian / Ubuntu)先挪出调用者的 cgroup:setsid 只换会话、不换 cgroup。面板点「升级」(还有定时
+  # 自动升级)时派发进程在 openbox-panel.service 的 cgroup 里,worker 跟着也在;下面「停止服务」停面板时
+  # systemd 按 cgroup 整个杀(单元没写 KillMode,默认 control-group),worker 一起没了、文件一个没换,面板也
+  # 停着(2026-09-29 用户的 Ubuntu 服务器 v0.1.263 → 264 就停在「停止服务... Terminated」)。
+  # systemd-run --scope 在本进程里 exec,环境变量、日志重定向原样带过去,只是换进一个自己的临时 scope。
+  # 不给固定单元名:上次失败留下的同名 scope 会让这次报 unit already exists。先空跑一次确认能用,不能用
+  # 再退回 setsid——不能拿 worker 的退出码判断,worker 升级失败也是非 0,退回去就成了升两次
+  if [ ! -r /etc/openwrt_release ] && [ -d /run/systemd/system ] && command -v systemd-run >/dev/null 2>&1 \
+    && systemd-run --scope --quiet true >/dev/null 2>&1; then
+    OPENBOX_UPDATE_CHANNEL_OVERRIDE="$CHANNEL_OVERRIDE" OPENBOX_UPDATE_MIRROR_PREFIX="$CLI_MIRROR_PREFIX" OPENBOX_UPDATE_EXPECT="$EXPECT_VERSION" OPENBOX_UPDATE_DISPATCHED=1 \
+      systemd-run --scope --quiet --description="Open-Box update" setsid sh "$0" >"$UPDATE_LOG" 2>&1 </dev/null &
+  elif command -v setsid >/dev/null 2>&1; then
     OPENBOX_UPDATE_CHANNEL_OVERRIDE="$CHANNEL_OVERRIDE" OPENBOX_UPDATE_MIRROR_PREFIX="$CLI_MIRROR_PREFIX" OPENBOX_UPDATE_EXPECT="$EXPECT_VERSION" OPENBOX_UPDATE_DISPATCHED=1 \
       setsid sh "$0" >"$UPDATE_LOG" 2>&1 </dev/null &
   elif command -v busybox >/dev/null 2>&1 && busybox setsid true >/dev/null 2>&1; then
